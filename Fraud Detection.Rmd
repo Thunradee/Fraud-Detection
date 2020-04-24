@@ -1,5 +1,5 @@
 ---
-title: "Fraud Detection B"
+title: "Fraud Detection"
 author: "Thunradee Tangsupakij"
 date: "12/2/2019"
 output: html_document
