@@ -1,0 +1,671 @@
+---
+title: "Fraud Detection B"
+author: "Thunradee Tangsupakij"
+date: "12/2/2019"
+output: html_document
+---
+
+```{r}
+#Library
+library(dplyr)
+library(tidyr)
+```
+
+Read in train_clean.csv data
+```{r}
+data = read.csv("train_clean.csv")
+data = data[,-c(1,2)]
+```
+
+
+Make dummy variables of P_emaildomain column
+```{r}
+# see the levels of P_emaildomain
+levels(data$P_emaildomain)
+
+# There are 60 levels, we'll make a dummy variable just is it end with .com or not
+P_isDotCom = c()
+
+a = grep(".com$", data$P_emaildomain)
+
+for(index in a)
+{
+  P_isDotCom[index] = 1
+}
+
+P_isDotCom[is.na(P_isDotCom)] <- 0
+
+# combind data
+data = cbind(data, P_isDotCom)
+length(which(data$isFraud == 1))
+length(which(data$isFraud == 0))
+```
+
+
+delete all the columns that contain missing value
+```{r}
+missing_value_col = c()
+j = 1
+
+for(i in 1:ncol(data))
+{
+  n_na = sum(is.na(data[,i]))
+  
+  if(n_na > 0)
+  {
+    missing_value_col[j]=i
+    j =j + 1
+  }
+}
+
+# a list of the column numbers of the columns that contain missing value
+missing_value_col
+length(missing_value_col)
+
+# delete the columns that contain missing values
+drop_all_data = data[, -missing_value_col]
+
+head(drop_all_data)
+```
+
+
+#Impute Missing Value
+Drop columns that have missing value more than 50%
+```{r}
+# delete columns that has amount of NA >= na_percent
+delNACol <- function(df, na_percent){
+  del_col = c()
+  j = 1
+
+  for(i in 1:length(df))
+  {
+    if(sum(is.na(df[i])) >= (na_percent*nrow(df)))
+    {
+      del_col[j] = i
+      j = j+1
+    }
+  }
+  return (del_col)
+}
+
+na_0.5 = delNACol(data, 0.5)
+
+data_1 = data[,-na_0.5]
+```
+
+
+Impute NA by gobal mode
+```{r}
+# a function will return a mode of a column
+getmode <- function(x, na.rm = FALSE) {
+  if(na.rm){
+    x = x[!is.na(x)]
+  }
+
+  ux <- unique(x)
+  return(ux[which.max(tabulate(match(x, ux)))])
+}
+
+# get columns number that contain NA
+na_col = c()
+j = 1
+
+for(i in 1:ncol(data_1))
+{
+  if(sum(is.na(data_1[,i])) > 0)
+  {
+    na_col[j]=i
+    j = j+1
+  }
+}
+
+# fill the NA with a mode of each column
+data_global_mode = data_1
+for(i in na_col)
+{
+  mode = getmode(data_1[,i], na.rm = TRUE)
+  data_global_mode[,i] = replace_na(data_global_mode[,i], mode)
+}
+```
+
+Impute NA by mode of a user and global mode
+```{r}
+data_user_mode = data_1
+data_user_mode = data_user_mode[order(data_user_mode$card1),]
+user_mode = data_1 %>%
+    dplyr::group_by(card1) %>%
+    summarise(num = dplyr::n())
+
+
+for(i in na_col)
+{
+  mode_list = data_1 %>%
+    dplyr::group_by(card1) %>%
+    summarise(mode = getmode(addr1, na.rm = TRUE))
+  user_mode = cbind(user_mode, mode_list$mode)
+  
+  # impute missing values
+  k=1
+  for(j in 1:length(data_user_mode))
+  {
+    for(n in 1:user_mode[j,2])
+    {
+      if(is.na(data_user_mode[j,i]))
+      {
+        print
+        data_user_mode[j,i] = user_mode[k,3]
+      }
+    }
+    k = k+1
+  }
+  user_mode = user_mode[,-3]
+}
+
+data_user_mode = data_user_mode[order(data_user_mode$TransactionID),]
+
+sum(is.na(data_1))
+sum(is.na(data_user_mode))
+
+# replace the rest NA with a global mode
+na_col = c()
+j = 1
+
+for(i in 1:ncol(data_user_mode))
+{
+  if(sum(is.na(data_user_mode[,i])) > 0)
+  {
+    na_col[j]=i
+    j = j+1
+  }
+}
+
+# fill the NA with a mode of each column
+data_user_n_global_mode = data_user_mode
+for(i in na_col)
+{
+  mode = getmode(data_user_mode[,i], na.rm = TRUE)
+  data_user_n_global_mode[,i] = replace_na(data_user_n_global_mode[,i], mode)
+}
+sum(is.na(data_user_n_global_mode))
+```
+
+Number of NA in the dataset before imputing NA by mode of user: 4,456,006
+Number of NA in the dataset after imputing NA by mode of user: 4,447,597
+
+Noval Approach
+```{r}
+getarea <- function(df, na_percent)
+{
+  #area = 0
+  if(na_percent >= 0 && na_percent <= 1)
+  {
+    del_col = delNACol(df, na_percent)
+    df = df[, -del_col]
+    df = na.omit(df)
+    area = ncol(df)*nrow(df)
+  }
+  
+  if((nrow(df) - ncol(df)) > (ncol(df)*2))
+  {
+    out <- list(area, df)
+    return (out)
+  }
+  
+  out <- list(-1, df)
+  return (out)
+}
+
+
+
+getMaxArea <- function(df)
+{
+  na_percent = 0.99
+  max  = 0
+  area = 1
+  max_df = df
+  while((na_percent > 0))
+  {
+          result = getarea(df, na_percent)
+          area = result[[1]]
+          
+          if(area > 0 && area > max)
+          {
+            cat("percent: ", na_percent, "\n")
+            max = area
+            max_df = result[[2]]
+          }
+          
+          na_percent = na_percent - 0.01
+  }
+  out <- list(max, max_df)
+  return (out)
+}
+
+result = getMaxArea(data)
+result[[2]]
+
+cp_data = result[[2]]
+length(which(cp_data$isFraud == 1))
+length(which(cp_data$isFraud == 0))
+fraud = length(which(cp_data$isFraud == 1))
+
+fraud/nrow(cp_data)
+#write.csv(cp_data, file="cp_data.csv")
+```
+We found the optimal dataset by deleting columns that have 11% or more NA and deleting rows that still have NA. We have deleted 182 columns and 19,952 row. In such rows were 1,605 frauds and 18,347 not frauds.
+
+data
+nrow = 144,233
+ncol = 426
+amount of isFraud = 1: 11,318
+amount of isFraud = 0: 132915
+%fraud in this dataset: 7.85%
+
+cp_data
+nrow = 124,281
+ncol = 244
+amount of isFraud = 1: 9,713
+amount of isFraud = 0: 114,568
+%fraud in this dataset: 7.82%
+
+# test three datasets by linear regression
+```{r}
+drop_all_data = drop_all_data[, -which(names(drop_all_data) %in% c("P_emaildomain", "R_emaildomain", "id_27", "id_30", "id_31", "id_33", "DeviceInfo"))]
+
+train1 = drop_all_data[10000:20000,]
+test1 = drop_all_data[20001:24000,]
+LR_model1 <- lm(isFraud ~ ., data = train1)
+
+result = predict(LR_model1,newdata=test1,type="response")
+
+result_new=c()
+for(i in 1:length(result))
+{
+  if(result[i]>.5)
+  {
+    result_new[i]=1
+  }
+  else
+  {
+    result_new[i]=0
+  }
+}
+table(test1$isFraud, result_new)
+t=table(test1$isFraud, result_new)
+# recall
+t[4]/(t[2]+t[4])
+# precision
+t[4]/(t[3]+t[4])
+# accuracy
+(t[1]+t[4])/(t[1]+t[3]+t[2]+t[4])
+```
+       0
+  0 3884
+  1  116
+[1] NA
+[1] NA
+
+```{r}
+data_user_n_global_mode = data_user_n_global_mode[, -which(names(data_user_n_global_mode) %in% c("P_emaildomain", "R_emaildomain", "id_27", "id_30", "id_31", "id_33", "DeviceInfo"))]
+
+train2 = data_user_n_global_mode[10000:20000,]
+test2= data_user_n_global_mode[20001:24000,]
+LR_model2 = lm(isFraud~.,data=train2)
+
+
+result2 = predict(LR_model2, newdata=test2, type="response")
+result_new2=c()
+
+for(i in 1:length(result2))
+{
+  if(result2[i]>.5)
+  {
+    result_new2[i]=1
+  }
+  else
+  {
+    result_new2[i]=0
+  }
+}
+table(test2$isFraud, result_new2)
+t=table(test2$isFraud, result_new2)
+# recall
+t[4]/(t[2]+t[4])
+# precision
+t[4]/(t[3]+t[4])
+# accuracy
+(t[1]+t[4])/(t[1]+t[3]+t[2]+t[4])
+```
+       0    1
+  0 3878    6
+  1   97   19
+[1] 0.1637931
+[1] 0.76
+[1] 0.97425
+
+```{r}
+cp_data = read.csv("cp_data.csv")
+cp_data = cp_data[, -which(names(cp_data) %in% c("P_emaildomain", "R_emaildomain", "id_27", "id_30", "id_31", "id_33", "DeviceInfo"))]
+cp_data = cp_data[, -1]
+
+train3 = cp_data[10000:20000,]
+test3= cp_data[20001:24000,]
+LR_model3 = lm(isFraud~.,data=train3)
+
+
+result3 = predict(LR_model3,newdata=test3,type="response")
+
+result_new3=c()
+
+for(i in 1:length(result3))
+{
+  if(result3[i]>.5)
+  {
+    result_new3[i]=1
+  }
+  else
+  {
+    result_new3[i]=0
+  }
+}
+table(test3$isFraud, result_new3)
+t=table(test3$isFraud, result_new3)
+# recall
+t[4]/(t[2]+t[4])
+# precision
+t[4]/(t[3]+t[4])
+# accuracy
+(t[1]+t[4])/(t[1]+t[3]+t[2]+t[4])
+```
+       0    1
+  0 3841   14
+  1  117   28
+[1] 0.1931034
+[1] 0.6666667
+[1] 0.96725
+
+
+```{r}
+library(e1071)
+svm_data = cp_data
+svm_data$isFraud = factor(svm_data$isFraud)
+svm_train <- svm_data[1:86999, ] # 70%
+svm_test <- svm_data[87000:124281, ] #30%
+
+svmfit = svm(isFraud ~., data = svm_train, kernel = "linear", cost = 1)
+summary(svmfit)
+
+svm_predict = predict(svmfit, newdata = svm_test)
+
+
+svm_tab = table(svm_test$isFraud, svm_predict)
+svm_tab
+#recall
+svm_tab[4]/(svm_tab[2]+svm_tab[4])
+#precision
+svm_tab[4]/(svm_tab[3]+svm_tab[4])
+#overall accuracy:
+(svm_tab[1]+svm_tab[4])/(svm_tab[1]+svm_tab[3]+svm_tab[2]+svm_tab[4])
+```
+Fraud detection: 0
+Accuracy: 89.45
+
+Try Linear Regression
+```{r}
+train=data_global_mode[1:142999,]
+test=data_global_mode[14300:144233,]
+LR_model = lm(isFraud~.,data=train)
+summary(LR_model)
+plot(LR_model)
+
+ps = predict(LR_model,newdata=train,type="response")
+ps
+ps2=c()
+for(i in 1:length(ps))
+{
+  if(ps[i]>.5)
+  {
+    ps2[i]=1
+  }
+  else
+  {
+    ps2[i]=0
+  }
+}
+table(train$isFraud,ps2)
+t=table(train$isFraud,ps2)
+t[4]/(t[2]+t[4])
+(t[1]+t[4])/(t[1]+t[3]+t[2]+t[4])
+```
+
+# Test Timeseries Data
+```{r}
+train_clean = read.csv("train_clean.csv")
+train_clean = train_clean[order(train_clean$card1),]
+
+second_f = 0
+second_nf = 0
+no_trans = 0
+
+for(i in 1:nrow(train_clean))
+{
+  if(train_clean$isFraud[i] == 1)
+  {
+    if(train_clean$card1[i] == train_clean$card1[i+1])
+    {
+      if(train_clean$isFraud[i+1] == 1)
+      {
+        second_f = second_f + 1
+      }
+      else
+      {
+        second_nf = second_nf + 1
+      }
+    }
+    else
+    {
+      no_trans = no_trans + 1
+    }
+  }
+}
+
+train_clean = train_clean[order(train_clean$TransactionID),]
+pc_second_f = second_f/(second_f+second_nf+no_trans)
+pc_second_f
+second_f
+second_nf
+no_trans
+```
+train_clean
+[1] 0.4311716
+[1] 4880
+[1] 5978
+[1] 460
+
+cp_data
+[1] 0.4227324
+[1] 4106
+[1] 5179
+[1] 428
+
+
+# Novel Approach Model
+```{r}
+library(tree)
+
+# a function will return a mode of a column
+getmode <- function(x, na.rm = FALSE) {
+  if(na.rm){
+    x <- x[!is.na(x)]
+  }
+  
+  ux <- unique(x)
+  return(ux[which.max(tabulate(match(x, ux)))])
+}
+
+models_maker <- function(df, window_size)
+{
+  model_list <- list()
+  for(i in 1:(nrow(df)-window_size+1))
+  {
+    # define train dataset
+    train_data <- df[i:(i+window_size-1), ]
+    dtree <- tree(isFraud ~ ., data = train_data)
+    # put the model in the list
+    model_list[[i]] <- dtree
+  }
+  return (model_list)
+}
+
+model2 <- function(df, window_size, model_amount)
+{
+  pred_list <- c()
+  pred_temp <- c()
+  model_list <- models_maker(df, window_size)
+  start_index <- window_size+model_amount
+  for(i in start_index:nrow(df))
+  {
+  
+    for(j in 1:model_amount)
+    {
+      pred_temp[j] <- predict(model_list[[i-start_index+j]], newdata = df[i, ], type="class")
+    }
+    final_pred <- getmode(pred_temp)
+    pred_list[i-start_index+1] = final_pred
+  }
+  return (pred_list)
+}
+
+model2_driver <- function(data){
+  window_size = 200
+  model_amount = 10
+  pred_list <- model2(data, window_size, model_amount)
+  evel_data <- data[-c(1:(window_size+model_amount-1)), ]
+  conf_matrix <- table(evel_data$isFraud, pred_list)
+  fraud_detect <- conf_matrix[4]/(conf_matrix[2]+conf_matrix[4])
+  accuracy <- (conf_matrix[1]+conf_matrix[4])/(conf_matrix[1]+conf_matrix[3]+conf_matrix[2]+conf_matrix[4])
+  print(conf_matrix)
+  print(fraud_detect)
+  print(accuracy)
+}
+
+model2_driver2 <- function(data, window_size_upper_bound, model_amount_upper_bound)
+{
+  model_amount = 2
+  
+  while(model_amount <= model_amount_upper_bound)
+  {
+    print(model_amount)
+    window_size = 100
+    while(window_size <= window_size_upper_bound)
+    {
+      print(window_size)
+      pred_list <- model2(data, window_size, model_amount)
+      evel_data <- data[-c(1:(window_size+model_amount-1)), ]
+      conf_matrix <- table(evel_data$isFraud, pred_list)
+      recall <- conf_matrix[4]/(conf_matrix[2]+conf_matrix[4])
+      precision <- conf_matrix[4]/(conf_matrix[3]+conf_matrix[4])
+      accuracy <- (conf_matrix[1]+conf_matrix[4])/(conf_matrix[1]+conf_matrix[3]+conf_matrix[2]+conf_matrix[4])
+      bias <- (conf_matrix[3]+conf_matrix[4])/(conf_matrix[2]+conf_matrix[4])
+      csv_row <- data.frame(window_size, model_amount, recall, precision, accuracy, bias)
+      write.table(csv_row, file="model2_report.csv", append = T, sep=',', row.names = F, col.names = F)
+      
+      window_size = window_size + 25 # update window size
+    }
+    model_amount = model_amount + 1 # update model amount
+  }
+}
+
+data = read.csv("cp_data.csv")
+data = data[, -1]
+#str(data, list.len=ncol(data))
+data = data[ , -which(names(data) %in% c("P_emaildomain", "R_emaildomain", "id_30", "id_31", "id_33", "DeviceInfo"))]
+data$isFraud = factor(data$isFraud)
+data_small = data[121000:nrow(data), ]
+model2_driver(data_small)
+model2_driver2(data_small, 700, 5)
+```
+
+
+
+# Find the best rank of Noval approach
+```{r}
+novel <- read.csv("model2_report.csv")
+colnames(novel) <- c("WindowSize", "ModelNum", "Recall", "Precision", "Accuracy", "Bias")
+novel = novel[order(novel$Recall, decreasing = T), ]
+RecallRank <- c()
+max <- 100
+for(i in 1:nrow(novel))
+{
+  
+  if(novel$Recall[i] < max)
+  {
+    rank = i
+    RecallRank[i] = rank
+  }
+  else
+  {
+    RecallRank[i] = rank
+  }
+}
+
+novel = novel[order(novel$Precision, decreasing = T), ]
+PrecisionRank <- c()
+max <- 100
+for(i in 1:nrow(novel))
+{
+  
+  if(novel$Precision[i] < max)
+  {
+    rank = i
+    PrecisionRank[i] = rank
+  }
+  else
+  {
+    PrecisionRank[i] = rank
+  }
+}
+
+novel = novel[order(novel$Accuracy, decreasing = T), ]
+AccuracyRank <- c()
+max <- 100
+for(i in 1:nrow(novel))
+{
+  
+  if(novel$Recall[i] < max)
+  {
+    rank = i
+    AccuracyRank[i] = rank
+  }
+  else
+  {
+    AccuracyRank[i] = rank
+  }
+}
+
+
+novel$BiasDif <- abs(1-novel$Bias)
+novel = novel[order(novel$BiasDif), ]
+BiasRank <- c()
+max <- -1
+for(i in 1:nrow(novel))
+{
+  
+  if(novel$Recall[i] > max)
+  {
+    rank = i
+    BiasRank[i] = rank
+  }
+  else
+  {
+    BiasRank[i] = rank
+  }
+}
+
+novel <- cbind(novel, RecallRank, PrecisionRank, AccuracyRank, BiasRank)
+novel <- novel[with(novel, order(novel$ModelNum, novel$WindowSize)),]
+
+novel$SumRank <- novel$RecallRank + novel$AccuracyRank + novel$BiasRank
+novel = novel[order(novel$SumRank), ]
+novel[1, ]
+```
